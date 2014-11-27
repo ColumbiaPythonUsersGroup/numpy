@@ -3563,14 +3563,35 @@ PyArray_FromIter(PyObject *obj, PyArray_Descr *dtype, npy_intp count)
 {
     PyObject *value;
     PyObject *iter = PyObject_GetIter(obj);
+    PyObject *iter2, *value2;
     PyArrayObject *ret = NULL;
-    npy_intp i, elsize, elcount;
+    npy_intp i, j, elsize, elcount[2], ndim;
     char *item, *new_data;
 
     if (iter == NULL) {
         goto done;
     }
-    elcount = (count < 0) ? 0 : count;
+    value = PyIter_Next(iter);
+    if (PyErr_Occurred()) {
+        goto done;
+    }
+    elcount[0] = (count < 0) ? 0 : count;
+    if (PySequence_Check(value) && (dtype->fields == Py_None)) {
+        elcount[1] = PySequence_Length(value);
+        if (elcount[1] < 1) {
+            elcount[1] = 1;
+        }
+    }
+    else {
+        elcount[1] = 1;
+    }
+    if (elcount[1] == 1) {
+        ndim = 1;
+    }
+    else {
+        ndim = 2;
+    }
+
     if ((elsize = dtype->elsize) == 0) {
         PyErr_SetString(PyExc_ValueError,
                 "Must specify length when using variable-size data-type.");
@@ -3587,23 +3608,23 @@ PyArray_FromIter(PyObject *obj, PyArray_Descr *dtype, npy_intp count)
         goto done;
     }
 
-    ret = (PyArrayObject *)PyArray_NewFromDescr(&PyArray_Type, dtype, 1,
-                                                &elcount, NULL,NULL, 0, NULL);
+    ret = (PyArrayObject *)PyArray_NewFromDescr(&PyArray_Type, dtype, ndim,
+                                                elcount, NULL,NULL, 0, NULL);
     dtype = NULL;
     if (ret == NULL) {
         goto done;
     }
-    for (i = 0; (i < count || count == -1) &&
-             (value = PyIter_Next(iter)); i++) {
-        if (i >= elcount) {
+    for (i = 0; (i < count || count == -1) && value; i++) {
+        if (i >= elcount[0]) {
             /*
               Grow PyArray_DATA(ret):
               this is similar for the strategy for PyListObject, but we use
               50% overallocation => 0, 4, 8, 14, 23, 36, 56, 86 ...
             */
-            elcount = (i >> 1) + (i < 4 ? 4 : 2) + i;
-            if (elcount <= NPY_MAX_INTP/elsize) {
-                new_data = PyDataMem_RENEW(PyArray_DATA(ret), elcount * elsize);
+            elcount[0] = (i >> 1) + (i < 4 ? 4 : 2) + i;
+            if (elcount[0] <= NPY_MAX_INTP/elsize) {
+                new_data = PyDataMem_RENEW(PyArray_DATA(ret), elcount[0] *
+                        elcount[1] * elsize);
             }
             else {
                 new_data = NULL;
@@ -3618,12 +3639,57 @@ PyArray_FromIter(PyObject *obj, PyArray_Descr *dtype, npy_intp count)
         }
         PyArray_DIMS(ret)[0] = i + 1;
 
-        if (((item = index2ptr(ret, i)) == NULL) ||
-                (PyArray_DESCR(ret)->f->setitem(value, item, ret) == -1)) {
-            Py_DECREF(value);
-            goto done;
+        if (ndim == 1) {
+            if (((item = index2ptr(ret, i)) == NULL) ||
+                    (PyArray_DESCR(ret)->f->setitem(value, item, ret) == -1)) {
+                Py_DECREF(value);
+                goto done;
+            }
+        }
+        else {
+            iter2 = PyObject_GetIter(value);
+            if (iter2 == NULL) {
+                Py_DECREF(value);
+                goto done;
+            }
+            for (j = 0; j < elcount[1]; j++) {
+                item = PyArray_GETPTR2(ret, i, j);
+                value2 = PyIter_Next(iter2);
+                if (value2 == NULL) {
+                    if (!PyErr_Occurred()) {
+                        PyErr_SetString(PyExc_ValueError, "sequence too short");
+                    }
+                    Py_DECREF(iter2);
+                    Py_DECREF(value);
+                    goto done;
+                }
+                if (PyArray_DESCR(ret)->f->setitem(value2, item, ret) == -1) {
+                    Py_DECREF(value2);
+                    Py_DECREF(iter2);
+                    Py_DECREF(value);
+                    goto done;
+                }
+            }
+            value2 = PyIter_Next(iter2);
+            if (value2 == NULL) {
+                if (PyErr_Occurred()) {
+                    Py_DECREF(iter2);
+                    Py_DECREF(value);
+                    goto done;
+                }
+            }
+            else {
+                PyErr_SetString(PyExc_ValueError, "sequence too long");
+                Py_DECREF(value2);
+                Py_DECREF(iter2);
+                Py_DECREF(value);
+                goto done;
+            }
+            Py_DECREF(iter2);
         }
         Py_DECREF(value);
+
+        value = PyIter_Next(iter);
     }
 
 
@@ -3644,7 +3710,7 @@ PyArray_FromIter(PyObject *obj, PyArray_Descr *dtype, npy_intp count)
         /* The size cannot be zero for PyDataMem_RENEW. */
         i = 1;
     }
-    new_data = PyDataMem_RENEW(PyArray_DATA(ret), i * elsize);
+    new_data = PyDataMem_RENEW(PyArray_DATA(ret), i * elcount[1] * elsize);
     if (new_data == NULL) {
         PyErr_SetString(PyExc_MemoryError,
                 "cannot allocate array memory");

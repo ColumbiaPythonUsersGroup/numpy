@@ -888,6 +888,92 @@ class TestFromiter(TestCase):
         self.assertRaises(NIterError, np.fromiter,
                           self.load_data(count, eindex), dtype=int, count=count)
 
+    def test_sequences_of_sequences(self):
+        a = fromiter(([x, x // 2, x+5] for x in range(6)), dtype=int)
+        expected = array([[0, 0, 5], [1, 0, 6], [2, 1, 7], [3, 1, 8],
+                          [4, 2, 9], [5, 2, 10]], dtype=int)
+        self.assertTrue(alltrue(a == expected))
+
+        a = fromiter(([x, x // 2, x+5, x+1] for x in range(6)), dtype=int)
+        expected = array([[0, 0, 5, 1], [1, 0, 6, 2], [2, 1, 7, 3],
+                          [3, 1, 8, 4], [4, 2, 9, 5], [5, 2, 10,  6]],
+                          dtype=int)
+        self.assertTrue(alltrue(a == expected))
+
+    def test_sequences_of_sequences_improper(self):
+        s = [[0, 0, 5], [1, 0, 6], [2, 1, 7], [3, 1, 8],
+                          [4, 2, 9], [5, 2, 10]]
+        expected = array(s, dtype=int)
+        self.assertTrue(alltrue(fromiter(s, dtype=int) == expected))
+
+        s = [[0, 0, 5], [1, 0], [2, 1, 7], [3, 1, 8],
+                          [4, 2, 9], [5, 2, 10]]
+        self.assertRaises(ValueError, fromiter, s, dtype=int)
+
+        s = [[0, 0, 5], [1, 0, 6, 7], [2, 1, 7], [3, 1, 8],
+                          [4, 2, 9], [5, 2, 10]]
+        self.assertRaises(ValueError, fromiter, s, dtype=int)
+
+        s = [[0, 0, 5], [], [2, 1, 7], [3, 1, 8],
+                          [4, 2, 9], [5, 2, 10]]
+        self.assertRaises(ValueError, fromiter, s, dtype=int)
+
+        s = [[0, 0, 5], 5, [2, 1, 7], [3, 1, 8],
+                          [4, 2, 9], [5, 2, 10]]
+        self.assertRaises(TypeError, fromiter, s, dtype=int)
+
+        s = [[], [], [2, 1, 7], [3, 1, 8],
+                          [4, 2, 9], [5, 2, 10]]
+        self.assertRaises(ValueError, fromiter, s, dtype=int)
+
+        s = [[], [], []]
+        self.assertRaises(ValueError, fromiter, s, dtype=int)
+
+    def load_data_2d(self, n, eindex):
+        # Raise an exception at the desired index in the iterator of sequences.
+        for e in range(n):
+            if e == eindex:
+                raise NIterError('error at index %s' % eindex)
+            yield [1, 2, 3]
+
+    def test_iterator_sequences_exception1(self):
+        count, eindex = 10, 0
+        self.assertRaises(NIterError, np.fromiter,
+                          self.load_data_2d(count, eindex), dtype=int)
+
+        count, eindex = 10, 5
+        self.assertRaises(NIterError, np.fromiter,
+                          self.load_data_2d(count, eindex), dtype=int)
+
+    def test_iterator_sequences_exception2(self):
+        # User exception in the iterator
+        s = [[1, 4, 5], self.load_data(3, 0)]
+        self.assertRaises(NIterError, np.fromiter, s, dtype=int)
+
+        # User exception in the iterator
+        s = [[1, 4, 5], self.load_data(3, 1)]
+        self.assertRaises(NIterError, np.fromiter, s, dtype=int)
+
+        # User exception in the iterator
+        s = [[1, 4, 5], self.load_data(3, 2)]
+        self.assertRaises(NIterError, np.fromiter, s, dtype=int)
+
+        s = [[1, 4, 5], self.load_data(3, 3)]
+        expected = array([[1, 4, 5], [0, 1, 2]], dtype=int)
+        self.assertTrue(alltrue(fromiter(s, dtype=int) == expected))
+
+        # User exception in the iterator
+        s = [[1, 4, 5], self.load_data(4, 3)]
+        self.assertRaises(NIterError, np.fromiter, s, dtype=int)
+
+        s = [[1, 4, 5], self.load_data(4, 3), [1, 2, 3]]
+        self.assertRaises(NIterError, np.fromiter, s, dtype=int)
+
+        # Sequence is too long
+        s = [[1, 4, 5], self.load_data(4, 4)]
+        self.assertRaises(ValueError, np.fromiter, s, dtype=int)
+
+
 
 class TestNonzero(TestCase):
     def test_nonzero_trivial(self):
